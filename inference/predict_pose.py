@@ -64,12 +64,19 @@ def get_pose_detector():
         _detector = vision.PoseLandmarker.create_from_options(options)
     return _detector
 
+POLE_MODEL_PATH = os.path.join(BASE_DIR, "saved_models", "yolov8_pole.pt")
+yolo_pole_model = None
+
 try:
     from ultralytics import YOLO
     os.environ["YOLO_VERBOSE"] = "False"
     yolo_model = YOLO('yolov8n.pt')
+    if os.path.exists(POLE_MODEL_PATH):
+        yolo_pole_model = YOLO(POLE_MODEL_PATH)
+        print(f"Loaded custom YOLOv8 Pole Detection Model from: {POLE_MODEL_PATH}")
 except Exception as e:
     yolo_model = None
+    yolo_pole_model = None
 
 def auto_zoom_person(image_bgr):
     if yolo_model is None:
@@ -137,15 +144,23 @@ def normalize_landmarks(pose_landmarks):
 
 def detect_pole(image_bgr, pose_landmarks=None):
     """
-    Enhanced Pole Detection Algorithm (Option A):
-    1. Human Body Masking: Excludes edges from human limbs (legs/arms) using MediaPipe skeleton connections so Kathak/dance legs aren't misidentified as poles.
-    2. HSV Wood & Rope Color Validation: Checks if edge regions exhibit wooden/brownish/tan or rope color signatures.
-    3. Multi-Segment Vertical Axis Accumulation: Allows detection of partially occluded poles (when athlete's body blocks parts of the pole).
-    4. Parallel Edge Pair Verification: Verifies dual parallel vertical boundaries of cylindrical poles.
+    Dual-Engine Pole Detection Pipeline:
+    Engine 1 (Primary): Custom-trained YOLOv8 Pole Object Detector (`yolov8_pole.pt`).
+    Engine 2 (Fallback): Geometric line analysis + MediaPipe limb masking + HSV wood/rope color validation.
     """
     if image_bgr is None or image_bgr.size == 0:
         return False
 
+    # 1. Primary Deep Learning Check (YOLOv8 Pole Model)
+    if yolo_pole_model is not None:
+        try:
+            results = yolo_pole_model(image_bgr, conf=0.25, verbose=False)
+            if results and len(results[0].boxes) > 0:
+                return True
+        except Exception as e:
+            pass
+
+    # 2. Fallback Heuristic Check
     h, w = image_bgr.shape[:2]
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
